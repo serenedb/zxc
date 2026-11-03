@@ -689,6 +689,21 @@ ZXC_EXPORT int zxc_dctx_set_dict(zxc_dctx* dctx, const void* dict, size_t dict_s
                                  const void* dict_huf);
 
 /**
+ * @brief Attaches a dictionary by reference; NULL detaches.
+ *
+ * Like zxc_dctx_set_dict() without the copy and without a literal table: the
+ * caller keeps @p dict alive and unchanged until it attaches another one or
+ * detaches. For callers that switch dictionaries per block.
+ *
+ * @param[in,out] dctx      Context to configure.
+ * @param[in]     dict      Dictionary content, or NULL for none.
+ * @param[in]     dict_size Size of @p dict in bytes, at most @ref ZXC_DICT_SIZE_MAX.
+ * @return @ref ZXC_OK; @ref ZXC_ERROR_DICT_TOO_LARGE above the maximum;
+ *         @ref ZXC_ERROR_DICT_UNSUPPORTED on a static context.
+ */
+ZXC_EXPORT int zxc_dctx_ref_dict(zxc_dctx* dctx, const void* dict, size_t dict_size);
+
+/**
  * @brief Sets the progress callback; NULL @p cb disables it.
  *
  * Honoured by zxc_stream_decompress() only.

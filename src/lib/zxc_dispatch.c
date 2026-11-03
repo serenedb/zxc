@@ -1400,6 +1400,18 @@ int zxc_dctx_set_dict(zxc_dctx* dctx, const void* dict, const size_t dict_size,
     return ZXC_OK;
 }
 
+int zxc_dctx_ref_dict(zxc_dctx* dctx, const void* dict, const size_t dict_size) {
+    if (UNLIKELY(!dctx)) return ZXC_ERROR_NULL_INPUT;
+    const int attach = dict && dict_size > 0;
+    if (UNLIKELY(dctx->owns_workspace && attach)) return ZXC_ERROR_DICT_UNSUPPORTED;
+    if (UNLIKELY(dict_size > ZXC_DICT_SIZE_MAX)) return ZXC_ERROR_DICT_TOO_LARGE;
+    if (dctx->dict_copy.data) (void)zxc_dict_copy_set(&dctx->dict_copy, NULL, 0, NULL);
+    dctx->params.dict = attach ? dict : NULL;
+    dctx->params.dict_size = attach ? dict_size : 0;
+    dctx->params.dict_huf = NULL;
+    return ZXC_OK;
+}
+
 int zxc_dctx_set_progress(zxc_dctx* dctx, const zxc_progress_callback_t cb, void* user_data) {
     if (UNLIKELY(!dctx)) return ZXC_ERROR_NULL_INPUT;
     dctx->params.progress_cb = cb;

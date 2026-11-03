@@ -442,6 +442,109 @@ cleanup:
     return result;
 }
 
+/* Dictionaries attached by reference and switched per block: each block decodes
+ * against the one it was written with, a copied dictionary is replaced, NULL
+ * detaches, and the limits of zxc_dctx_set_dict() hold. */
+int test_dict_block_ref_roundtrip(void) {
+    printf("=== TEST: Dict - block decode with a dictionary attached by reference ===\n");
+
+    enum { DSZ = 4096, SLICE = 32, NSLICE = 400, N = NSLICE * (SLICE + 1) };
+    const size_t cap = zxc_compress_block_bound(N);
+    uint8_t* dicts = (uint8_t*)malloc(2 * (size_t)DSZ);
+    uint8_t* src = (uint8_t*)malloc(2 * (size_t)N);
+    uint8_t* comp = (uint8_t*)malloc(2 * cap);
+    uint8_t* out = (uint8_t*)malloc(N);
+    const size_t ws_sz = zxc_static_dctx_workspace_size(ZXC_BLOCK_SIZE_MIN);
+    void* ws = malloc(ws_sz);
+    zxc_cctx* cctx = zxc_create_cctx();
+    zxc_dctx* dctx = zxc_create_dctx();
+    int64_t csz[2] = {0, 0};
+
+    int result = 0;
+    if (!dicts || !src || !comp || !out || !ws || !cctx || !dctx) {
+        printf("  [FAIL] allocation failed\n");
+        goto cleanup;
+    }
+    zxc_test_srand(0x2EFD1C7U);
+    for (size_t i = 0; i < 2 * (size_t)DSZ; i++) dicts[i] = (uint8_t)zxc_test_rand();
+    for (int k = 0; k < 2; k++) {
+        const uint8_t* d = dicts + (size_t)k * DSZ;
+        uint8_t* s = src + (size_t)k * N;
+        for (size_t j = 0; j < NSLICE; j++) {
+            memcpy(s + j * (SLICE + 1), d + zxc_test_rand() % (DSZ - SLICE), SLICE);
+            s[j * (SLICE + 1) + SLICE] = (uint8_t)j;
+        }
+        csz[k] = zxc_cctx_set_dict(cctx, d, DSZ, NULL);
+        if (csz[k] == ZXC_OK) csz[k] = zxc_cctx_set_param(cctx, ZXC_C_LEVEL, 3);
+        if (csz[k] == ZXC_OK) csz[k] = zxc_compress_block(cctx, s, N, comp + (size_t)k * cap, cap);
+        if (csz[k] <= 0) {
+            printf("  [FAIL] compress block %d: %lld\n", k, (long long)csz[k]);
+            goto cleanup;
+        }
+    }
+
+    for (int safe = 0; safe < 2; safe++) {
+        for (int k = 0; k < 2; k++) {
+            if (zxc_dctx_ref_dict(dctx, dicts + (size_t)k * DSZ, DSZ) != ZXC_OK) {
+                printf("  [FAIL] attaching dictionary %d\n", k);
+                goto cleanup;
+            }
+            memset(out, 0xA5, N);
+            const uint8_t* c = comp + (size_t)k * cap;
+            const int64_t r = safe ? zxc_decompress_block_safe(dctx, c, (size_t)csz[k], out, N)
+                                   : zxc_decompress_block(dctx, c, (size_t)csz[k], out, N);
+            if (r != N || memcmp(out, src + (size_t)k * N, N) != 0) {
+                printf("  [FAIL] block %d safe=%d: %lld\n", k, safe, (long long)r);
+                goto cleanup;
+            }
+        }
+    }
+    printf("  [PASS] blocks decode against the dictionary attached for each\n");
+
+    int64_t r = zxc_dctx_ref_dict(dctx, dicts + DSZ, DSZ);
+    if (r == ZXC_OK) r = zxc_decompress_block(dctx, comp, (size_t)csz[0], out, N);
+    if (r == N && memcmp(out, src, N) == 0) {
+        printf("  [FAIL] block 0 decoded against dictionary 1\n");
+        goto cleanup;
+    }
+    r = zxc_dctx_set_dict(dctx, dicts + DSZ, DSZ, NULL);
+    if (r == ZXC_OK) r = zxc_dctx_ref_dict(dctx, dicts, DSZ);
+    if (r == ZXC_OK) r = zxc_decompress_block(dctx, comp, (size_t)csz[0], out, N);
+    if (r != N || memcmp(out, src, N) != 0) {
+        printf("  [FAIL] a reference after a copy: %lld\n", (long long)r);
+        goto cleanup;
+    }
+    r = zxc_dctx_ref_dict(dctx, NULL, 0);
+    if (r == ZXC_OK) r = zxc_decompress_block(dctx, comp, (size_t)csz[0], out, N);
+    if (r == N && memcmp(out, src, N) == 0) {
+        printf("  [FAIL] block 0 decoded after detaching\n");
+        goto cleanup;
+    }
+    printf("  [PASS] the attached bytes decide; it replaces a copy; NULL detaches\n");
+
+    zxc_dctx* sd = zxc_init_static_dctx(ws, ws_sz, ZXC_BLOCK_SIZE_MIN);
+    if (zxc_dctx_ref_dict(NULL, dicts, DSZ) != ZXC_ERROR_NULL_INPUT ||
+        zxc_dctx_ref_dict(dctx, dicts, (size_t)ZXC_DICT_SIZE_MAX + 1) != ZXC_ERROR_DICT_TOO_LARGE ||
+        !sd || zxc_dctx_ref_dict(sd, dicts, DSZ) != ZXC_ERROR_DICT_UNSUPPORTED ||
+        zxc_dctx_ref_dict(sd, NULL, 0) != ZXC_OK) {
+        printf("  [FAIL] limits\n");
+        goto cleanup;
+    }
+    printf("  [PASS] a NULL context, an oversized and a static-context dictionary are refused\n");
+    result = 1;
+
+cleanup:
+    zxc_free_cctx(cctx);
+    zxc_free_dctx(dctx);
+    free(ws);
+    free(dicts);
+    free(src);
+    free(comp);
+    free(out);
+    if (result) printf("PASS\n\n");
+    return result;
+}
+
 int test_dict_mismatch_error(void) {
     printf("=== TEST: Dict - dict_id mismatch error ===\n");
 
