@@ -319,6 +319,7 @@ int test_dict_buffer_roundtrip(void);
 int test_dict_block_roundtrip(void);
 int test_dict_block_safe_roundtrip(void);
 int test_dict_block_ref_roundtrip(void);
+int test_dict_block_in_place(void);
 int test_dict_mismatch_error(void);
 int test_dict_required_error(void);
 int test_dict_no_dict_compat(void);

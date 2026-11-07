@@ -374,8 +374,9 @@ ZXC_EXPORT size_t zxc_compress_block_bound(size_t input_size);
  * The decoder uses speculative (wild-copy) writes on its fast path, so it
  * needs a tail pad beyond the declared size: with this value a dictionary-free
  * block decodes straight into @c dst on a heap context; without it, through a
- * bounce and a copy. A dictionary block always bounces, needing the dictionary
- * and the payload contiguous, and so does an over-sized static context.
+ * bounce and a copy. A dictionary block needs the dictionary and the payload
+ * contiguous: it decodes in place when the attached dictionary ends where
+ * @c dst begins, and bounces otherwise, as does an over-sized static context.
  *
  * @param[in] uncompressed_size Original block size in bytes
  *                              (must be <= @ref ZXC_BLOCK_SIZE_MAX).

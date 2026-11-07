@@ -545,6 +545,68 @@ cleanup:
     return result;
 }
 
+/* A dictionary attached by reference that ends where the output begins: the block
+ * decodes at the bound and at its exact size, and the dictionary bytes before the
+ * output stay as they were. */
+int test_dict_block_in_place(void) {
+    printf("=== TEST: Dict - block decode after the dictionary it was written with ===\n");
+
+    enum { DSZ = 4096, SLICE = 32, NSLICE = 400, N = NSLICE * (SLICE + 1) };
+    const size_t cap = zxc_compress_block_bound(N);
+    const size_t bound = zxc_decompress_block_bound(N);
+    uint8_t* dict = (uint8_t*)malloc(DSZ);
+    uint8_t* src = (uint8_t*)malloc(N);
+    uint8_t* comp = (uint8_t*)malloc(cap);
+    uint8_t* window = (uint8_t*)malloc(DSZ + bound);
+    zxc_cctx* cctx = zxc_create_cctx();
+    zxc_dctx* dctx = zxc_create_dctx();
+
+    int result = 0;
+    if (!dict || !src || !comp || !window || !cctx || !dctx) {
+        printf("  [FAIL] allocation failed\n");
+        goto cleanup;
+    }
+    zxc_test_srand(0x51A7E5U);
+    for (size_t i = 0; i < DSZ; i++) dict[i] = (uint8_t)zxc_test_rand();
+    for (size_t j = 0; j < NSLICE; j++) {
+        memcpy(src + j * (SLICE + 1), dict + zxc_test_rand() % (DSZ - SLICE), SLICE);
+        src[j * (SLICE + 1) + SLICE] = (uint8_t)j;
+    }
+    int64_t csz = zxc_cctx_set_dict(cctx, dict, DSZ, NULL);
+    if (csz == ZXC_OK) csz = zxc_cctx_set_param(cctx, ZXC_C_LEVEL, 3);
+    if (csz == ZXC_OK) csz = zxc_compress_block(cctx, src, N, comp, cap);
+    if (csz <= 0) {
+        printf("  [FAIL] compress block: %lld\n", (long long)csz);
+        goto cleanup;
+    }
+
+    memcpy(window, dict, DSZ);
+    uint8_t* const out = window + DSZ;
+    for (int safe = 0; safe < 2; safe++) {
+        memset(out, 0xA5, bound);
+        int64_t r = zxc_dctx_ref_dict(dctx, window, DSZ);
+        if (r == ZXC_OK)
+            r = safe ? zxc_decompress_block_safe(dctx, comp, (size_t)csz, out, N)
+                     : zxc_decompress_block(dctx, comp, (size_t)csz, out, bound);
+        if (r != N || memcmp(out, src, N) != 0 || memcmp(window, dict, DSZ) != 0) {
+            printf("  [FAIL] safe=%d: %lld\n", safe, (long long)r);
+            goto cleanup;
+        }
+    }
+    printf("  [PASS] decodes at the bound and at the exact size, the dictionary intact\n");
+    result = 1;
+
+cleanup:
+    zxc_free_cctx(cctx);
+    zxc_free_dctx(dctx);
+    free(dict);
+    free(src);
+    free(comp);
+    free(window);
+    if (result) printf("PASS\n\n");
+    return result;
+}
+
 int test_dict_mismatch_error(void) {
     printf("=== TEST: Dict - dict_id mismatch error ===\n");
 

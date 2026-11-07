@@ -1912,9 +1912,11 @@ static int zxc_dctx_prepare(zxc_dctx* RESTRICT dctx, const size_t block_size,
  * Public API; full contract in @c zxc_buffer.h. Decodes one format-conformant
  * block; the decoded payload cannot exceed @c ZXC_BLOCK_SIZE_MAX, so
  * @p dst_capacity is bounded by @c ZXC_BLOCK_SIZE_MAX + @c ZXC_DECOMPRESS_TAIL_PAD.
- * With a dictionary in @p opts the decode runs through the [dict | decode]
- * bounce buffer; otherwise it goes straight into @p dst, and is redone through
- * @c work_buf if a tight tail aborted it, leaving @p dst partly written.
+ * With a dictionary in @p opts the decode runs in place when the dictionary
+ * already ends where @p dst begins, and otherwise through the [dict | decode]
+ * bounce buffer; without one it goes straight into @p dst. A tight tail that
+ * aborts an in-place decode redoes it through a bounce buffer, leaving @p dst
+ * partly written.
  */
 int64_t zxc_decompress_block(zxc_dctx* dctx, const void* RESTRICT src, const size_t src_size,
                              void* RESTRICT dst, const size_t dst_capacity) {
@@ -1952,6 +1954,12 @@ int64_t zxc_decompress_block(zxc_dctx* dctx, const void* RESTRICT src, const siz
 
     int res;
     if (dict && dict_size > 0) {
+        if (dict + dict_size == (const uint8_t*)dst) {
+            // The dictionary already precedes dst: no [dict | decode] assembly.
+            res = zxc_decompress_chunk_wrapper(ctx, (const uint8_t*)src, src_size, (uint8_t*)dst,
+                                               dst_capacity, 0);
+            if (LIKELY(res != ZXC_ERROR_OVERFLOW)) return res;
+        }
         // [dict | decode] assembled in the cctx-owned dict_buffer
         uint8_t* const dec_buf = ctx->dict_buffer;
         ZXC_MEMCPY(dec_buf, dict, dict_size);
