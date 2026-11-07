@@ -374,8 +374,9 @@ ZXC_EXPORT size_t zxc_compress_block_bound(size_t input_size);
  * The decoder uses speculative (wild-copy) writes on its fast path, so it
  * needs a tail pad beyond the declared size: with this value a dictionary-free
  * block decodes straight into @c dst on a heap context; without it, through a
- * bounce and a copy. A dictionary block always bounces, needing the dictionary
- * and the payload contiguous, and so does an over-sized static context.
+ * bounce and a copy. A dictionary block needs the dictionary and the payload
+ * contiguous: it decodes in place when the attached dictionary ends where
+ * @c dst begins, and bounces otherwise, as does an over-sized static context.
  *
  * @param[in] uncompressed_size Original block size in bytes
  *                              (must be <= @ref ZXC_BLOCK_SIZE_MAX).
@@ -687,6 +688,21 @@ ZXC_EXPORT int zxc_dctx_get_param(const zxc_dctx* dctx, zxc_dparam_t param, int6
  */
 ZXC_EXPORT int zxc_dctx_set_dict(zxc_dctx* dctx, const void* dict, size_t dict_size,
                                  const void* dict_huf);
+
+/**
+ * @brief Attaches a dictionary by reference; NULL detaches.
+ *
+ * Like zxc_dctx_set_dict() without the copy and without a literal table: the
+ * caller keeps @p dict alive and unchanged until it attaches another one or
+ * detaches. For callers that switch dictionaries per block.
+ *
+ * @param[in,out] dctx      Context to configure.
+ * @param[in]     dict      Dictionary content, or NULL for none.
+ * @param[in]     dict_size Size of @p dict in bytes, at most @ref ZXC_DICT_SIZE_MAX.
+ * @return @ref ZXC_OK; @ref ZXC_ERROR_DICT_TOO_LARGE above the maximum;
+ *         @ref ZXC_ERROR_DICT_UNSUPPORTED on a static context.
+ */
+ZXC_EXPORT int zxc_dctx_ref_dict(zxc_dctx* dctx, const void* dict, size_t dict_size);
 
 /**
  * @brief Sets the progress callback; NULL @p cb disables it.
